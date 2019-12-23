@@ -93,3 +93,4 @@ ggplot(df.delays.by.day, aes(x=name, y=value)) +
   geom_bar(stat = "identity",color="white", fill="blue", alpha=0.4) + 
   labs(title="Distribution of delayed flights by week days",y= "Proportion of delayed flights", x = "Day")
 
+
