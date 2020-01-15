@@ -17,5 +17,5 @@ Data set provided at http://stat-computing.org/dataexpo/2009/ contains data abou
 
 ## Exploratory Data Analysis
 
-<img src="images/years.png" width=400 height=200> <img src="images/day.png" width=400 height=200> 
+<img src="images/total.png" width=400 height=200> <img src="images/day.png" width=400 height=200> 
 
