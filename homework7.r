@@ -3,12 +3,17 @@ install.packages("RSQLite")
 install.packages("sqldf")
 install.packages("tictoc")
 install.packages("biglm")
+install.packages("dummies")
+install.packages("gsub")
 library(RSQLite)
 library(DBI)
 library(ggplot2)
 library(tictoc)
 library(sqldf)
 library(biglm)
+require(data.table)
+require(dummies)
+library(caret)
 
 db.path = 'D:/Fax/Winter 2019 - 2020/Statistical Principles of Data Science/Homework/Homework 7/data/AirlineDB'
 
@@ -83,6 +88,12 @@ for (i in seq(1, num.years, by=1)) {
   gc()
 }
 
+# drop NA values
+total.by.origin[is.na(total.by.origin)] <- 0
+delayed.by.origin[is.na(delayed.by.origin)] <- 0
+total.by.airline[is.na(total.by.airline)] <- 0
+delayed.by.airline[is.na(delayed.by.airline)] <- 0
+
 # sum up all values 
 total.by.origin$sum <- rowSums(total.by.origin[,2:ncol(total.by.origin)])
 delayed.by.origin$sum <- rowSums(delayed.by.origin[,2:ncol(delayed.by.origin)])
@@ -91,6 +102,9 @@ delayed.by.airline$sum <- rowSums(delayed.by.airline[,2:ncol(delayed.by.airline)
 # merge data sets with sums
 df.delayed.by.origin <- merge(total.by.origin[, c("airport", "sum")], delayed.by.origin[, c("airport", "sum")], by="airport", all=TRUE)
 df.delayed.by.airline <- merge(total.by.airline[, c("airline", "sum")], delayed.by.airline[, c("airline", "sum")], by="airline", all=TRUE)
+# delete nan values
+df.delayed.by.airline <- df.delayed.by.airline[complete.cases(df.delayed.by.airline),]
+df.delayed.by.origin <- df.delayed.by.origin[complete.cases(df.delayed.by.origin),]
 # divide values
 df.delayed.by.origin <- transform(df.delayed.by.origin, prop=sum.y/sum.x)
 df.delayed.by.airline <- transform(df.delayed.by.airline, prop=sum.y/sum.x)
@@ -144,17 +158,13 @@ ggplot(df.delayed.by.origin[1:20,], aes(x=airport, y=prop)) +
 
 ## plotting the proportion of delayed flights by airlines
 df.delayed.by.airline <- df.delayed.by.airline[order(-df.delayed.by.airline$prop),]
-df.delayed.by.airline$airline <- factor(df.delayed.by.airline$airline , levels=df.delayed.by.airline$airline )
+df.delayed.by.airline$airline <- factor(df.delayed.by.airline$airline, levels=df.delayed.by.airline$airline )
 ggplot(df.delayed.by.airline[1:20,], aes(x=airline, y=prop)) + 
   geom_bar(stat = "identity",color="white", fill="blue", alpha=0.4) + 
   labs(y= "Proportion of delayed flights", x = "Airline")
 
-# factors needed for regression
-origin.factors <- df.delayed.by.origin$airport
-airline.factors <- df.delayed.by.airline$airline
-
 # removing all variables
-rm(list=setdiff(ls(), c("origin.factors", "airline.factors", "num.years", "delay.con", "years")))
+rm(list=setdiff(ls(), c("num.years", "delay.con", "years")))
 gc()
 
 
@@ -164,28 +174,32 @@ gc()
 tic()
 # seed for generating a random sample
 set.seed(42)
-sample.size = 100000
-for (i in seq(1, num.years, by=1)) {
+sample.size <- 120000
+train.size <- 100000
+test.size <- 20000
+# all indexes used for fiting the model
+train.indices <- matrix(0, train.size, num.years) 
+test.indices <- matrix(0, test.size, num.years)
+attributes <- c("DayOfWeek", "Origin", "ArrDelay", "DepTime", "Distance")
+for (i in seq(1, 10, by=1)) {
   # data for particular year
   query.year <- paste("SELECT * FROM 'AirlineData' WHERE Year=", years[i])
   data.year <- dbGetQuery(delay.con, query.year) 
   # shuffled data
   shuffled.indices <- sample(sample.size)
-  data.year <- data.year[shuffled.indices, ]
-  # turn columns into factors
-  data.year$Year <- factor(data.year$Year, ordered=TRUE, levels=years)
-  data.year$Month <-factor(data.year$Month, levels=c(1,2,3,4,5,6,7,8,9,10,11,12))
-  data.year$DayOfWeek <- factor(data.year$DayOfWeek, levels=c(1,2,3,4,5,6,7))
-  data.year$Origin <-factor(data.year$Origin, levels=origin.factors)
-  data.year$UniqueCarrier <- factor(data.year$UniqueCarrier, levels=airline.factors)
+  train.indices[, i] <- shuffled.indices[1:train.size]
+  test.indices[, i] <- shuffled.indices[-seq(1:train.size)]
+  data.year <- data.year[train.indices, attributes]
+  # dummy encoding of factors
+  days.factors.year<- levels(factor(data.year$DayOfWeek))
+  # adding dummy variables
+  data.year <- as.data.table(dummy.data.frame(data.year, names=c( "DayOfWeek")))
   # changing to numeric
-  data.year[,c(5,7,14,15,16,19)] <- lapply(data.year[, c(5,7,14,15,16,19)], as.numeric)
-  # adding delayed column
-  data.year$delayed <- (data.year$ArrDelay > 10) + 0
+  data.year[,1:ncol(data.year)] <- lapply(data.year[,1:ncol(data.year)], as.numeric)
   # regression formula
-  formula <- delayed~Year+Month+DayOfWeek+DepTime+Distance+Origin+UniqueCarrier
+  formula <- reformulate(setdiff(colnames(data.year), c("ArrDelay", "DayOfWeek1")), response="ArrDelay")
   if (i == 1) {
-    model <- biglm(formula, data.year)  
+    model <- biglm(formula, data=data.frame(data.year))  
   } else {
     model <- update(model, data.year)
   }
@@ -194,4 +208,38 @@ for (i in seq(1, num.years, by=1)) {
 }
   
 toc()
+
+
+# evaluating performance of the model
+train.squared.error <- 0
+test.squared.error <- 0
+for (i in seq(1, num.years)) {
+  # getting data for one year
+  query.year <- paste("SELECT * FROM 'AirlineData' WHERE Year=", years[i])
+  data.year <- dbGetQuery(delay.con, query.year) 
+  # training dataset
+  train.data <- data.year[train.indices[,i], attributes]
+  # testing dataset
+  test.data <- data.year[-train.indices, attributes]
+  # dummy encoding of factors
+  days.factors.year<- levels(factor(data.year$DayOfWeek))
+  # changing to numeric
+  data.year[,c("ArrDelay", "Distance", "DepTime")] <- lapply(data.year[, c("ArrDelay", "Distance","DepTime")], as.numeric)
+  # adding dummy variables
+  data.year <- as.data.table(dummy.data.frame(data.year, names=c("DayOfWeek")))
+  data.year <- data.year[,-c("DayOfWeek1")]
+  # changing to numeric
+  data.year[,c("ArrDelay", "Distance", "DepTime")] <- lapply(data.year[, c("ArrTime", "Distance","DepTime")], as.numeric)
+  # getting predictions
+  train.predictions <- predict(model, train.data)
+  test.predictions <- predict(model, test.data)
+  # getting error y_hat - y
+  train.squared.error <- train.square.error + (train.predictions - train.data$ArrDelay)^2
+  test.squared.error <- test.square.error + (test.predictions - test.data$ArrDelay)^2
+  rm(data.year)
+  gc()
+}
+# calculating mse
+mse.train <- train.squared.error / (num.years * train.size)
+mse.test <- test.squared.error / (num.years * test.size)
 
