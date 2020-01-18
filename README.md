@@ -13,7 +13,7 @@ Predicting delays from the airline dataset. After the exploratory data analysis,
 
 ## Data set
 
-Data set provided at http://stat-computing.org/dataexpo/2009/ contains data about commercial flights in USA between 1987 and 2008. Data is described by
+Data set provided at http://stat-computing.org/dataexpo/2009/ contains data about commercial flights in USA between 1987 and 2008. Data is described by 29 attributes.
 
 ## Exploratory Data Analysis
 
